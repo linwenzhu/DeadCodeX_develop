@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "deadcodex"
+dynamic = ["version"]
+description = "Cross-file and framework-aware dead code analysis for Python"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { file = "LICENSE.txt" }
+authors = [{ name = "DeadCodeX Team" }]
+
+[project.scripts]
+deadcodex = "deadcodex.core:main"
+
+[tool.setuptools.packages.find]
+include = ["deadcodex*"]
+
+[tool.setuptools.dynamic]
+version = { attr = "deadcodex.version.__version__" }
+
+[tool.ruff]
+line-length = 79
+target-version = "py39"
+
