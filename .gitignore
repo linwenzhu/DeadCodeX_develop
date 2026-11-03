@@ -1,18 +1,70 @@
+# Python bytecode and interpreter caches
 __pycache__/
 *.py[cod]
-*.egg-info/
+*$py.class
+
+# Packaging and build output
 build/
 dist/
+*.egg-info/
+.eggs/
+*.egg
+wheels/
+pip-wheel-metadata/
+
+# Virtual environments
 .venv/
-.tox/
+venv/
+env/
+ENV/
+.direnv/
+
+# Test, type-checking and lint caches
 .pytest_cache/
+.tox/
+.nox/
 .ruff_cache/
+.mypy_cache/
+.pyright/
+.hypothesis/
+
+# Coverage output
 .coverage
+.coverage.*
 coverage.xml
 htmlcov/
-.DS_Store
+
+# Generated DeadCodeX reports
+deadcodex-report.html
+deadcodex-report.json
+
+# Local environment and secret files
+.env
+.env.*
+!.env.example
+
+# Editor and IDE settings
 .idea/
 .vscode/
+*.swp
+*.swo
+*~
+
+# Operating-system metadata
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Logs and temporary files
 *.log
 *.tmp
+*.bak
 
+# Jupyter notebooks
+.ipynb_checkpoints/
+
+# Documentation build output
+docs/_build/
+
+# Keep uv.lock under version control for reproducible environments.
+!uv.lock
