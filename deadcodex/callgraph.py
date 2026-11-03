@@ -7,7 +7,9 @@ from deadcodex.model import ProjectModel, QualifiedName
 
 @dataclass
 class CallGraph:
-    edges: dict[QualifiedName, set[QualifiedName]] = field(default_factory=dict)
+    edges: dict[QualifiedName, set[QualifiedName]] = field(
+        default_factory=dict
+    )
 
 
 class CallGraphBuilder:
@@ -20,4 +22,3 @@ class ReachabilityAnalyzer:
         self, graph: CallGraph, entry_points: set[QualifiedName]
     ) -> set[QualifiedName]:
         raise NotImplementedError
-

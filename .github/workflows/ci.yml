@@ -1,0 +1,32 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.11", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          python-version: ${{ matrix.python-version }}
+          enable-cache: true
+      - name: Install locked development environment
+        run: uv sync --locked --all-groups
+      - name: Lint
+        run: uv run ruff check deadcodex tests test_smoke.py
+      - name: Check formatting
+        run: uv run ruff format --check deadcodex tests test_smoke.py
+      - name: Test development environment
+        run: uv run pytest
+      - name: Test installed wheel
+        run: uv run tox -e py

@@ -12,4 +12,3 @@ class Analyzer(Protocol):
 class ProjectAnalyzer:
     def analyze(self, project: ProjectModel) -> object:
         raise NotImplementedError
-

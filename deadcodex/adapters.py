@@ -17,4 +17,3 @@ class FlaskAdapter:
 class FastAPIAdapter:
     def discover(self, project: ProjectModel) -> frozenset[QualifiedName]:
         raise NotImplementedError
-

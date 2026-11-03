@@ -11,4 +11,3 @@ class AnalysisResult:
 class ProjectAnalysis:
     def analyze(self, project: ProjectModel) -> list[Finding]:
         raise NotImplementedError
-

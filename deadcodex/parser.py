@@ -22,4 +22,3 @@ class PythonParser:
         self, source: str, filename: str | Path, module: ModuleModel
     ) -> ParsedModule:
         raise NotImplementedError
-

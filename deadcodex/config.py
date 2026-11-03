@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Any, Sequence
+from collections.abc import Sequence
+from typing import Any
 
 
 def make_config(argv: Sequence[str] | None = None) -> dict[str, Any]:
     raise NotImplementedError
-

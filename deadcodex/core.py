@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable
 
 from deadcodex.model import Finding
 
@@ -27,4 +27,3 @@ def main() -> None:
     raise SystemExit(
         "DeadCodeX project framework initialized; implementation pending."
     )
-

@@ -1,6 +1,7 @@
 """Human-readable and machine-readable reporting boundaries."""
 
-from typing import Iterable, Protocol
+from collections.abc import Iterable
+from typing import Protocol
 
 from deadcodex.model import Finding
 
@@ -22,4 +23,3 @@ class JsonReporter:
 class HtmlReporter:
     def render(self, findings: Iterable[Finding]) -> str:
         raise NotImplementedError
-

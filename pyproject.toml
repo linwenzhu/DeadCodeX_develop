@@ -34,6 +34,17 @@ dependencies = [
   "tomli >= 1.1.0; python_version < '3.11'",
 ]
 
+[dependency-groups]
+dev = [
+  "coverage",
+  "pint",
+  "pytest",
+  "pytest-cov",
+  "ruff",
+  "tox",
+  "ty",
+]
+
 [project.scripts]
 deadcodex = "deadcodex.core:main"
 
@@ -136,3 +147,4 @@ parallel = true
 
 [tool.pytest.ini_options]
 addopts = "--cov deadcodex --cov-report=html --cov-report=term --cov-report=xml"
+

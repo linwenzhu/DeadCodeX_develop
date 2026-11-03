@@ -11,4 +11,3 @@ class ImportResolver:
 class ReferenceResolver:
     def resolve(self, project: ProjectModel) -> None:
         raise NotImplementedError
-
