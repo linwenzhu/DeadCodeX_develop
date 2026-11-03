@@ -147,4 +147,3 @@ parallel = true
 
 [tool.pytest.ini_options]
 addopts = "--cov deadcodex --cov-report=html --cov-report=term --cov-report=xml"
-
