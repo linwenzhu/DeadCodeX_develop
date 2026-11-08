@@ -1,24 +1,46 @@
-"""Python source parsing boundary."""
-
-from __future__ import annotations
-
+import ast
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Optional, Union
 
+from deadcodex import noqa
 from deadcodex.model import ModuleModel
 
 
-@dataclass
+@dataclass(frozen=True)
 class ParsedModule:
-    module: ModuleModel
-    source: str
-    tree: Any | None = None
-    error: Exception | None = None
+    """A source module and the result of parsing it."""
+
+    filename: Path
+    source_lines: list[str]
+    noqa_lines: dict
+    module: Optional[ModuleModel] = None
+    tree: Optional[ast.Module] = None
+    error: Optional[Union[SyntaxError, ValueError]] = None
 
 
 class PythonParser:
-    def parse(
-        self, source: str, filename: str | Path, module: ModuleModel
-    ) -> ParsedModule:
-        raise NotImplementedError
+    """Convert Python source into an AST plus collection metadata."""
+
+    def parse(self, code, filename="", module=None):
+        filename = Path(filename)
+        source_lines = code.splitlines()
+        noqa_lines = noqa.parse_noqa(source_lines)
+
+        try:
+            tree = ast.parse(code, filename=str(filename), type_comments=True)
+        except (SyntaxError, ValueError) as error:
+            return ParsedModule(
+                filename=filename,
+                source_lines=source_lines,
+                noqa_lines=noqa_lines,
+                module=module,
+                error=error,
+            )
+        return ParsedModule(
+            filename=filename,
+            source_lines=source_lines,
+            noqa_lines=noqa_lines,
+            module=module,
+            tree=tree,
+        )
