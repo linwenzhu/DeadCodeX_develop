@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable
 
 from deadcodex.model import ProjectModel
 
@@ -11,4 +11,3 @@ from deadcodex.model import ProjectModel
 class ProjectLoader:
     def load(self, paths: Iterable[str | Path]) -> ProjectModel:
         raise NotImplementedError
-
