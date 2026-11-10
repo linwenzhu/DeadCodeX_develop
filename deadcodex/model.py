@@ -27,7 +27,7 @@ class ResolutionStatus(str, Enum):
 class Scope:
     qualified_name: QualifiedName
     kind: str
-    parent: Scope | None = None
+    parent: "Scope | None" = None
 
 
 @dataclass
@@ -53,3 +53,4 @@ class Finding:
     kind: str
     name: str
     confidence: int
+
