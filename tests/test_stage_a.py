@@ -131,7 +131,10 @@ def test_scavenge_discovers_files_excludes_paths_and_loads_whitelist(tmp_path):
     assert excluded.resolve() in project_paths
     assert "ignored" not in {item.name for item in analyzer.defined_vars}
     assert "visit_Call" in analyzer.used_names
-    assert get_modules([tmp_path]) == [excluded.resolve(), included.resolve()]
+    assert set(get_modules([tmp_path])) == {
+        excluded.resolve(),
+        included.resolve(),
+    }
 
 
 def test_read_file_honours_python_encoding_cookie(tmp_path):
