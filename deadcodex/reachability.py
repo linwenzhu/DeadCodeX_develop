@@ -4,6 +4,13 @@ from deadcodex import utils
 
 
 class Reachability:
+    """Report intra-function unreachable regions through an injected callback.
+
+    Call visit() in post-order: children must be visited before their parent.
+    The Collector owns AST traversal and turns reports into Item objects.
+    This class neither resolves names nor constructs project call graphs.
+    """
+
     def __init__(self, report):
         self._report = report
         self._no_fall_through_nodes = set()
@@ -36,6 +43,7 @@ class Reachability:
             self._handle_reachability_try(node)
 
     def reset(self):
+        """Discard flow state before analyzing another module."""
         self._no_fall_through_nodes = set()
 
     def _can_fall_through(self, node):
