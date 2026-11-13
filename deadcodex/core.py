@@ -9,6 +9,7 @@ from deadcodex.collector import AstCollector, _match
 from deadcodex.model import ProjectModel
 from deadcodex.parser import PythonParser
 from deadcodex.project import ProjectLoader
+from deadcodex.resolver import ImportResolver, ReferenceResolver
 from deadcodex.scope import ScopeCollector
 from deadcodex.utils import ExitCode
 
@@ -131,6 +132,33 @@ class DeadCodex(AstCollector):
                 continue
             self._log("Included whitelist:", path)
             self.scan(module_data.decode("utf-8"), filename=path)
+
+    def resolve_imports(self):
+        """Resolve collected imports against modules in the project."""
+
+        definitions = (
+            self.defined_attrs
+            + self.defined_classes
+            + self.defined_funcs
+            + self.defined_methods
+            + self.defined_props
+            + self.defined_vars
+        )
+        ImportResolver(definitions).resolve(self.project)
+
+    def resolve_references(self):
+        """Resolve collected references after import resolution."""
+
+        definitions = (
+            self.defined_attrs
+            + self.defined_classes
+            + self.defined_funcs
+            + self.defined_methods
+            + self.defined_props
+            + self.defined_vars
+        )
+        self.resolve_imports()
+        ReferenceResolver(definitions).resolve(self.project)
 
     def report(self):
         """Reporting is connected during F's second submission."""
