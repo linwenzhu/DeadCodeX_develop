@@ -193,6 +193,9 @@ class AstCollector(AnalysisResult, ast.NodeVisitor):
                         alias=alias,
                         first_lineno=lines.get_first_line_number(node),
                     )
+                binding.scope_name = self.current_module.scope_for_node(
+                    node
+                ).qualified_name
                 self.current_module.imports.append(binding)
             self._define(
                 self.defined_imports,
