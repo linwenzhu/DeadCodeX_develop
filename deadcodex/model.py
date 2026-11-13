@@ -79,6 +79,7 @@ class ImportBinding:
     alias: Optional[str] = None
     status: ResolutionStatus = ResolutionStatus.PENDING
     target: Optional[QualifiedName] = None
+    scope_name: Optional[QualifiedName] = None
 
 
 @dataclass

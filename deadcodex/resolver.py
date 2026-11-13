@@ -8,6 +8,7 @@ from deadcodex.model import (
     ProjectModel,
     QualifiedName,
     ResolutionStatus,
+    ScopeKind,
 )
 
 
@@ -33,14 +34,14 @@ class _ProjectIndex:
             self.modules_by_name[module.qualified_name].append(module)
 
         self.top_level_names = {name.parts[0] for name in self.modules_by_name}
-        self.definitions_by_name = defaultdict(set)
         self.definition_names = set()
+        self.definitions_by_qualified_name = defaultdict(list)
         for definition in definitions:
             name = getattr(definition, "qualified_name", None)
             if name is None:
                 continue
             self.definition_names.add(name)
-            self.definitions_by_name[name.name].add(name)
+            self.definitions_by_qualified_name[name].append(definition)
 
     def module_status(self, name):
         exact_matches = self.modules_by_name.get(name, ())
@@ -104,7 +105,7 @@ class ImportResolver:
             current_parts if module.is_package else current_parts[:-1]
         )
         parents_to_remove = binding.level - 1
-        if parents_to_remove > len(package_parts):
+        if parents_to_remove >= len(package_parts):
             return None
         if parents_to_remove:
             package_parts = package_parts[:-parents_to_remove]
@@ -187,22 +188,10 @@ class ReferenceResolver:
             reference.status = ResolutionStatus.UNRESOLVED
             return
 
-        bindings = self._active_bindings(
-            imports.get(reference.parts[0], ()), reference.first_lineno
-        )
-        if bindings:
-            self._resolve_imported_reference(reference, bindings, index)
+        if self._resolve_lexical_reference(module, reference, imports, index):
             return
 
-        local_targets = self._visible_local_targets(module, reference, index)
-        if local_targets:
-            self._set_project_targets(reference, local_targets)
-            return
-
-        same_name = index.definitions_by_name.get(reference.parts[0], set())
-        if len(reference.parts) == 1 and same_name:
-            self._set_project_targets(reference, same_name)
-        elif reference.parts[0] in vars(builtins):
+        if reference.parts[0] in vars(builtins):
             reference.status = ResolutionStatus.EXTERNAL
             reference.target = _qualified(("builtins", *reference.parts))
         else:
@@ -277,29 +266,53 @@ class ReferenceResolver:
         return result
 
     @staticmethod
-    def _set_project_targets(reference, targets):
-        targets = set(targets)
-        if len(targets) == 1:
-            reference.status = ResolutionStatus.RESOLVED
-            reference.target = next(iter(targets))
-        else:
-            reference.status = ResolutionStatus.AMBIGUOUS
+    def _lexical_scopes(module, reference):
+        scope = module.scope_named(reference.scope_name)
+        if scope is None:
+            yield module.qualified_name
+            return
+        first = True
+        while scope is not None:
+            # A class namespace is not an enclosing lexical scope for methods.
+            if first or scope.kind is not ScopeKind.CLASS:
+                yield scope.qualified_name
+            first = False
+            scope = scope.parent
 
-    @staticmethod
-    def _visible_local_targets(module, reference, index):
-        candidates = []
-        scope_parts = reference.scope_name.parts
-        module_parts = module.qualified_name.parts
-        for target in index.definitions_by_name.get(reference.parts[0], ()):
-            if target.parts[: len(module_parts)] != module_parts:
-                continue
-            parent_parts = target.parts[:-1]
-            if scope_parts[: len(parent_parts)] == parent_parts:
-                candidates.append(target)
-
-        if not candidates:
-            return ()
-        longest = max(len(target.parts) for target in candidates)
-        return {
-            target for target in candidates if len(target.parts) == longest
-        }
+    def _resolve_lexical_reference(self, module, reference, imports, index):
+        for scope_name in self._lexical_scopes(module, reference):
+            local_name = scope_name.child(reference.parts[0])
+            definitions = index.definitions_by_qualified_name.get(
+                local_name, ()
+            )
+            bindings = self._active_bindings(
+                [
+                    binding
+                    for binding in imports.get(reference.parts[0], ())
+                    if (binding.scope_name or module.qualified_name)
+                    == scope_name
+                ],
+                reference.first_lineno,
+            )
+            if bindings and definitions:
+                prior_definitions = [
+                    item.first_lineno
+                    for item in definitions
+                    if item.first_lineno <= reference.first_lineno
+                ]
+                if prior_definitions and max(prior_definitions) >= (
+                    bindings[0].first_lineno
+                ):
+                    bindings = ()
+            if bindings:
+                self._resolve_imported_reference(reference, bindings, index)
+                return True
+            if definitions:
+                target = _extend(local_name, ".".join(reference.parts[1:]))
+                reference.status = index.qualified_status(target)
+                if reference.status is ResolutionStatus.RESOLVED:
+                    reference.target = target
+                # An unknown attribute of a local binding must not fall back
+                # to an outer import or an unrelated project definition.
+                return True
+        return False

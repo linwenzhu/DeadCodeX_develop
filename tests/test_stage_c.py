@@ -144,7 +144,7 @@ def test_marks_external_and_unresolved_imports_separately():
     assert consumer.references[1].status is ResolutionStatus.UNRESOLVED
 
 
-def test_same_name_symbols_are_ambiguous_without_an_import():
+def test_same_name_symbols_are_invisible_without_an_import():
     first = make_module("first")
     second = make_module("second")
     definitions = [
@@ -158,7 +158,7 @@ def test_same_name_symbols_are_ambiguous_without_an_import():
     ReferenceResolver(definitions).resolve(project)
 
     reference = consumer.references[0]
-    assert reference.status is ResolutionStatus.AMBIGUOUS
+    assert reference.status is ResolutionStatus.UNRESOLVED
     assert reference.target is None
 
 
