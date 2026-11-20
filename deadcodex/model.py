@@ -109,6 +109,75 @@ class CallSite:
     target: Optional[QualifiedName] = None
 
 
+@dataclass(frozen=True)
+class CallEdge:
+    """A resolved call between two qualified project symbols."""
+
+    caller: QualifiedName
+    callee: QualifiedName
+    filename: Path
+    first_lineno: int
+
+
+@dataclass
+class CallGraph:
+    """Resolved edges and all observed call sites for a project."""
+
+    edges: list[CallEdge] = field(default_factory=list)
+    calls: list[CallSite] = field(default_factory=list)
+
+
+@dataclass
+class ReachabilityResult:
+    """Reachable graph nodes and unreachable project callables."""
+
+    entry_points: frozenset[QualifiedName]
+    reachable: frozenset[QualifiedName]
+    unreachable: frozenset[QualifiedName]
+    unresolved_entry_points: frozenset[QualifiedName]
+    ambiguous_entry_points: frozenset[QualifiedName]
+    predecessors: dict[QualifiedName, Optional[QualifiedName]] = field(
+        default_factory=dict, repr=False
+    )
+
+    @staticmethod
+    def _as_qualified_name(target):
+        return (
+            target
+            if isinstance(target, QualifiedName)
+            else QualifiedName.from_string(target)
+        )
+
+    def path_to(self, target):
+        """Return one deterministic entry-point-to-target path, if any."""
+        target = self._as_qualified_name(target)
+        if target not in self.reachable:
+            return ()
+
+        path = []
+        current = target
+        while current is not None:
+            path.append(current)
+            current = self.predecessors[current]
+        return tuple(reversed(path))
+
+    def explain(self, target):
+        """Return a concise explanation of the target's reachability."""
+        target = self._as_qualified_name(target)
+        if target in self.reachable:
+            path = self.path_to(target)
+            rendered_path = " -> ".join(map(str, path))
+            return f"reachable via {rendered_path}"
+        if target in self.unreachable:
+            entry_points = ", ".join(map(str, sorted(self.entry_points)))
+            return f"unreachable from entry points: {entry_points}"
+        if target in self.unresolved_entry_points:
+            return f"unresolved entry point: {target}"
+        if target in self.ambiguous_entry_points:
+            return f"ambiguous entry point: {target}"
+        return f"unknown project target: {target}"
+
+
 @dataclass(eq=False)
 class Scope:
     """A lexical scope in a module's definition hierarchy."""
