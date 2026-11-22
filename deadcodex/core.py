@@ -6,6 +6,10 @@ from collections import defaultdict
 from pathlib import Path
 
 from deadcodex import utils
+from deadcodex.adapters import (
+    DecoratorEntryPointAdapter,
+    make_framework_adapter,
+)
 from deadcodex.analysis import ProjectAnalysis
 from deadcodex.callgraph import (
     CALLABLE_TYPES,
@@ -13,6 +17,7 @@ from deadcodex.callgraph import (
     ReachabilityAnalyzer,
 )
 from deadcodex.collector import AstCollector, _match
+from deadcodex.config import InputError, make_config
 from deadcodex.model import CallGraph, ProjectModel, ResolutionStatus
 from deadcodex.parser import PythonParser
 from deadcodex.pipeline import ProjectAnalyzer
@@ -278,8 +283,39 @@ class DeadCodex(AstCollector):
 
 
 def main():
-    """The CLI is connected during E's submission."""
+    try:
+        config = make_config()
+    except InputError as error:
+        print(error, file=sys.stderr)
+        sys.exit(ExitCode.InvalidCmdlineArguments)
 
-    raise SystemExit(
-        "DeadCodeX parser and collector are ready; CLI integration pending."
+    deadcodex = DeadCodex(
+        verbose=config["verbose"],
+        ignore_names=config["ignore_names"],
+        ignore_decorators=config["ignore_decorators"],
     )
+    deadcodex.scavenge(config["paths"], exclude=config["exclude"])
+    entry_point_providers = [
+        make_framework_adapter(name) for name in config["frameworks"]
+    ]
+    if config["entry_point_decorators"]:
+        entry_point_providers.append(
+            DecoratorEntryPointAdapter(tuple(config["entry_point_decorators"]))
+        )
+    try:
+        exit_code = deadcodex.report(
+            min_confidence=config["min_confidence"],
+            sort_by_size=config["sort_by_size"],
+            make_whitelist=config["make_whitelist"],
+            entry_points=config["entry_points"],
+            entry_point_providers=tuple(entry_point_providers),
+            output_format=config["output_format"],
+            output=config["output"],
+            baseline=config["baseline"],
+            update_baseline=config["update_baseline"],
+        )
+    except ValueError as error:
+        print(error, file=sys.stderr)
+        sys.exit(ExitCode.InvalidCmdlineArguments)
+    sys.exit(exit_code)
+
