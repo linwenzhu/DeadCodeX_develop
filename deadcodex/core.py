@@ -2,11 +2,17 @@
 
 import pkgutil
 import sys
+from collections import defaultdict
 from pathlib import Path
 
 from deadcodex import utils
+from deadcodex.callgraph import (
+    CALLABLE_TYPES,
+    CallGraphBuilder,
+    ReachabilityAnalyzer,
+)
 from deadcodex.collector import AstCollector, _match
-from deadcodex.model import ProjectModel
+from deadcodex.model import CallGraph, ProjectModel, ResolutionStatus
 from deadcodex.parser import PythonParser
 from deadcodex.project import ProjectLoader
 from deadcodex.resolver import ImportResolver, ReferenceResolver
@@ -30,6 +36,10 @@ class DeadCodex(AstCollector):
         self.scope_collector = ScopeCollector()
         self.project = ProjectModel(root=Path())
         self.exit_code = ExitCode.NoDeadCode
+        self.call_graph_builder = CallGraphBuilder()
+        self.project_reachability_analyzer = ReachabilityAnalyzer()
+        self.call_graph = CallGraph()
+        self.project_reachability = None
 
     def scan(self, code, filename="", module=None):
         """Parse one source string and collect its AST facts."""
@@ -159,6 +169,82 @@ class DeadCodex(AstCollector):
         )
         self.resolve_imports()
         ReferenceResolver(definitions).resolve(self.project)
+        self.call_graph = self.call_graph_builder.build(
+            self.project, self.defined_items
+        )
+        return self.call_graph
+
+    def analyze_reachability(self, entry_points=()):
+        """Traverse known call edges from explicit qualified entry points."""
+        self.resolve_references()
+        self.project_reachability = self.project_reachability_analyzer.analyze(
+            self.project, self.defined_items, self.call_graph, entry_points
+        )
+        return self.project_reachability
+
+    def get_unused_code_project(
+        self, entry_points=(), min_confidence=0, sort_by_size=False
+    ):
+        """Report experimental project-level unreachable callables."""
+        if not 0 <= min_confidence <= 100:
+            raise ValueError("min_confidence must be between 0 and 100.")
+        result = self.analyze_reachability(entry_points)
+        invalid = (
+            result.unresolved_entry_points | result.ambiguous_entry_points
+        )
+        if invalid:
+            explanations = "; ".join(
+                result.explain(target) for target in sorted(invalid)
+            )
+            raise ValueError(
+                f"Invalid or ambiguous entry points: {explanations}"
+            )
+
+        uncertain_names = {
+            call.callee_parts[-1]
+            for call in self.call_graph.calls
+            if call.callee_parts
+            and call.status
+            in {ResolutionStatus.UNRESOLVED, ResolutionStatus.AMBIGUOUS}
+        }
+        # Unknown calls may reach same-named callables and their callees.
+        protected = {
+            item.qualified_name
+            for item in self.defined_items
+            if item.typ in CALLABLE_TYPES and item.name in uncertain_names
+        }
+        adjacency = defaultdict(set)
+        for edge in self.call_graph.edges:
+            adjacency[edge.caller].add(edge.callee)
+        pending = list(protected)
+        while pending:
+            for callee in adjacency[pending.pop()]:
+                if callee not in protected:
+                    protected.add(callee)
+                    pending.append(callee)
+
+        items = {
+            item
+            for item in self.defined_items
+            if item.typ in CALLABLE_TYPES
+            and item.qualified_name in result.unreachable - protected
+        }
+        # Non-callable findings retain legacy analysis until stage seven
+        # introduces the qualified-name analysis pipeline.
+        items.update(
+            item
+            for item in super().get_unused_code()
+            if item.typ not in CALLABLE_TYPES
+        )
+        findings = [
+            item for item in items if item.confidence >= min_confidence
+        ]
+
+        def sort_key(item):
+            location = (str(item.filename).lower(), item.first_lineno)
+            return (item.size, *location) if sort_by_size else location
+
+        return sorted(findings, key=sort_key)
 
     def report(self):
         """Reporting is connected during F's second submission."""
