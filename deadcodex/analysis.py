@@ -1,5 +1,6 @@
 from deadcodex import utils
-from deadcodex.model import Item
+from deadcodex.model import Item, ResolutionStatus
+from deadcodex.resolver import ReferenceResolver
 
 
 def _get_unused_items(defined_items, used_names):
@@ -96,3 +97,110 @@ class AnalysisResult:
     @property
     def unused_attrs(self):
         return _get_unused_items(self.defined_attrs, self.used_names)
+
+
+class ProjectAnalysis:
+    """Find unused definitions from already resolved project references.
+
+    Qualified targets distinguish identical names across modules and scopes.
+    Unresolved reads and dynamic names retain conservative name protection.
+    This is reference usage, not entry-point reachability.
+    """
+
+    def analyze(
+        self, project, result, min_confidence=0, sort_by_size=False
+    ) -> list[Item]:
+        if not 0 <= min_confidence <= 100:
+            raise ValueError("min_confidence must be between 0 and 100.")
+
+        used_targets = set()
+        used_imports = set()
+        reference_names = set()
+        uncertain_names = set()
+        for module in project.modules:
+            for reference in module.references:
+                reference_names.add(reference.name)
+                if reference.status is ResolutionStatus.PENDING:
+                    raise ValueError("Resolve references before analysis.")
+                if reference.status is ResolutionStatus.RESOLVED:
+                    if reference.target is not None:
+                        used_targets.add(reference.target)
+                elif reference.status in {
+                    ResolutionStatus.UNRESOLVED,
+                    ResolutionStatus.AMBIGUOUS,
+                }:
+                    uncertain_names.add(reference.name)
+                used_imports.update(self._used_imports(module, reference))
+
+        # __all__, getattr and format strings may record uses without a
+        # UsageReference. Preserve that compatibility signal.
+        # Collector also records the original spelling of aliased imports
+        # for legacy analysis. Importing a name alone is not a qualified use.
+        alias_original_names = {
+            binding.imported_name or binding.module_name
+            for module in project.modules
+            for binding in module.imports
+            if binding.alias is not None
+        }
+        dynamic_names = (
+            set(result.used_names) - reference_names - alias_original_names
+        )
+        fallback_names = uncertain_names | dynamic_names
+
+        def is_used(item):
+            if item.qualified_name is None:
+                return item.name in result.used_names
+            if item.typ == "import":
+                return (
+                    item.filename.resolve(),
+                    item.first_lineno,
+                    item.name,
+                ) in used_imports or item.name in dynamic_names
+            return (
+                item.qualified_name in used_targets
+                or item.name in fallback_names
+            )
+
+        unused = {item for item in result.defined_items if not is_used(item)}
+        unused.update(result.unreachable_code)
+
+        def sort_key(item):
+            location = (str(item.filename).lower(), item.first_lineno)
+            return (item.size, *location) if sort_by_size else location
+
+        return sorted(
+            (item for item in unused if item.confidence >= min_confidence),
+            key=sort_key,
+        )
+
+    @staticmethod
+    def _used_imports(module, reference):
+        if not reference.parts:
+            return set()
+        for scope_name in ReferenceResolver._lexical_scopes(module, reference):
+            bindings = ReferenceResolver._active_bindings(
+                [
+                    binding
+                    for binding in module.imports
+                    if binding.bound_name == reference.parts[0]
+                    and (binding.scope_name or module.qualified_name)
+                    == scope_name
+                ],
+                reference.first_lineno,
+            )
+            if bindings:
+                # A local definition may have shadowed this import.
+                if reference.binding_target is None and reference.status in {
+                    ResolutionStatus.RESOLVED,
+                    ResolutionStatus.EXTERNAL,
+                }:
+                    return set()
+                return {
+                    (
+                        module.path.resolve(),
+                        binding.first_lineno,
+                        binding.bound_name,
+                    )
+                    for binding in bindings
+                }
+        return set()
