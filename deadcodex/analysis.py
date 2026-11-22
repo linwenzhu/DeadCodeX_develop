@@ -1,6 +1,5 @@
 from deadcodex import utils
 from deadcodex.model import Item, ResolutionStatus
-from deadcodex.resolver import ReferenceResolver
 
 
 def _get_unused_items(defined_items, used_names):
@@ -27,6 +26,7 @@ class AnalysisResult:
         self.defined_vars = get_list("variable")
         self.unreachable_code = get_list("unreachable_code")
         self.used_names = utils.LoggingSet("name", verbose)
+        self.dynamic_used_names = set()
 
     @property
     def defined_items(self):
@@ -115,11 +115,10 @@ class ProjectAnalysis:
 
         used_targets = set()
         used_imports = set()
-        reference_names = set()
         uncertain_names = set()
         for module in project.modules:
+            path = module.path.resolve()
             for reference in module.references:
-                reference_names.add(reference.name)
                 if reference.status is ResolutionStatus.PENDING:
                     raise ValueError("Resolve references before analysis.")
                 if reference.status is ResolutionStatus.RESOLVED:
@@ -130,21 +129,15 @@ class ProjectAnalysis:
                     ResolutionStatus.AMBIGUOUS,
                 }:
                     uncertain_names.add(reference.name)
-                used_imports.update(self._used_imports(module, reference))
+                used_imports.update(
+                    (path, binding.first_lineno, binding.bound_name)
+                    for binding in reference.import_bindings
+                )
 
-        # __all__, getattr and format strings may record uses without a
-        # UsageReference. Preserve that compatibility signal.
-        # Collector also records the original spelling of aliased imports
-        # for legacy analysis. Importing a name alone is not a qualified use.
-        alias_original_names = {
-            binding.imported_name or binding.module_name
-            for module in project.modules
-            for binding in module.imports
-            if binding.alias is not None
-        }
-        dynamic_names = (
-            set(result.used_names) - reference_names - alias_original_names
-        )
+        # Names recorded by __all__, getattr, and other dynamic usage
+        # heuristics remain protected even when a static reference shares
+        # the same spelling.
+        dynamic_names = result.dynamic_used_names
         fallback_names = uncertain_names | dynamic_names
 
         def is_used(item):
@@ -172,35 +165,3 @@ class ProjectAnalysis:
             (item for item in unused if item.confidence >= min_confidence),
             key=sort_key,
         )
-
-    @staticmethod
-    def _used_imports(module, reference):
-        if not reference.parts:
-            return set()
-        for scope_name in ReferenceResolver._lexical_scopes(module, reference):
-            bindings = ReferenceResolver._active_bindings(
-                [
-                    binding
-                    for binding in module.imports
-                    if binding.bound_name == reference.parts[0]
-                    and (binding.scope_name or module.qualified_name)
-                    == scope_name
-                ],
-                reference.first_lineno,
-            )
-            if bindings:
-                # A local definition may have shadowed this import.
-                if reference.binding_target is None and reference.status in {
-                    ResolutionStatus.RESOLVED,
-                    ResolutionStatus.EXTERNAL,
-                }:
-                    return set()
-                return {
-                    (
-                        module.path.resolve(),
-                        binding.first_lineno,
-                        binding.bound_name,
-                    )
-                    for binding in bindings
-                }
-        return set()

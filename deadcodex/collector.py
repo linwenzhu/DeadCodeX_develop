@@ -288,7 +288,8 @@ class AstCollector(AnalysisResult, ast.NodeVisitor):
             and isinstance(node.op, ast.Mod)
             and self._is_locals_call(node.right)
         ):
-            self.used_names |= set(re.findall(r"%\((\w+)\)", node.left.value))
+            for name in set(re.findall(r"%\((\w+)\)", node.left.value)):
+                self._record_dynamic_use(name)
 
     def visit_Call(self, node):
         self._record_call(node)
@@ -300,7 +301,7 @@ class AstCollector(AnalysisResult, ast.NodeVisitor):
         ):
             attr_name_arg = node.args[1]
             if utils.is_ast_string(attr_name_arg):
-                self.used_names.add(attr_name_arg.value)
+                self._record_dynamic_use(attr_name_arg.value)
 
         # Parse variable names in new format strings:
         # "{my_var}".format(**locals())
@@ -332,7 +333,7 @@ class AstCollector(AnalysisResult, ast.NodeVisitor):
             variables = re.sub(r"\[\w*\]", "", field_name).split(".")
             for variable in variables:
                 if is_identifier(variable):
-                    self.used_names.add(variable)
+                    self._record_dynamic_use(variable)
 
     @staticmethod
     def _is_locals_call(node):
@@ -427,6 +428,10 @@ class AstCollector(AnalysisResult, ast.NodeVisitor):
         elif isinstance(node.ctx, (ast.Param, ast.Store)):
             self._define_variable(node.id, node)
 
+    def _record_dynamic_use(self, name):
+        self.used_names.add(name)
+        self.dynamic_used_names.add(name)
+
     def _record_usage(self, node, kind, parts):
         if self.current_module is None:
             return
@@ -477,11 +482,11 @@ class AstCollector(AnalysisResult, ast.NodeVisitor):
             assert isinstance(node.value, (ast.List, ast.Tuple))
             for element in node.value.elts:
                 if utils.is_ast_string(element):
-                    self.used_names.add(element.value)
+                    self._record_dynamic_use(element.value)
 
     def visit_MatchClass(self, node):
         for keyword_attribute in node.kwd_attrs:
-            self.used_names.add(keyword_attribute)
+            self._record_dynamic_use(keyword_attribute)
 
     def visit(self, node):
         # Visit children nodes first to allow recursive reachability analysis.

@@ -95,6 +95,9 @@ class UsageReference:
     status: ResolutionStatus = ResolutionStatus.PENDING
     target: Optional[QualifiedName] = None
     binding_target: Optional[QualifiedName] = None
+    import_bindings: tuple[ImportBinding, ...] = field(
+        default=(), repr=False, compare=False
+    )
 
 
 @dataclass
