@@ -1,5 +1,5 @@
 from deadcodex import utils
-from deadcodex.model import Item
+from deadcodex.model import Item, ResolutionStatus
 
 
 def _get_unused_items(defined_items, used_names):
@@ -26,6 +26,7 @@ class AnalysisResult:
         self.defined_vars = get_list("variable")
         self.unreachable_code = get_list("unreachable_code")
         self.used_names = utils.LoggingSet("name", verbose)
+        self.dynamic_used_names = set()
 
     @property
     def defined_items(self):
@@ -96,3 +97,71 @@ class AnalysisResult:
     @property
     def unused_attrs(self):
         return _get_unused_items(self.defined_attrs, self.used_names)
+
+
+class ProjectAnalysis:
+    """Find unused definitions from already resolved project references.
+
+    Qualified targets distinguish identical names across modules and scopes.
+    Unresolved reads and dynamic names retain conservative name protection.
+    This is reference usage, not entry-point reachability.
+    """
+
+    def analyze(
+        self, project, result, min_confidence=0, sort_by_size=False
+    ) -> list[Item]:
+        if not 0 <= min_confidence <= 100:
+            raise ValueError("min_confidence must be between 0 and 100.")
+
+        used_targets = set()
+        used_imports = set()
+        uncertain_names = set()
+        for module in project.modules:
+            path = module.path.resolve()
+            for reference in module.references:
+                if reference.status is ResolutionStatus.PENDING:
+                    raise ValueError("Resolve references before analysis.")
+                if reference.status is ResolutionStatus.RESOLVED:
+                    if reference.target is not None:
+                        used_targets.add(reference.target)
+                elif reference.status in {
+                    ResolutionStatus.UNRESOLVED,
+                    ResolutionStatus.AMBIGUOUS,
+                }:
+                    uncertain_names.add(reference.name)
+                used_imports.update(
+                    (path, binding.first_lineno, binding.bound_name)
+                    for binding in reference.import_bindings
+                )
+
+        # Names recorded by __all__, getattr, and other dynamic usage
+        # heuristics remain protected even when a static reference shares
+        # the same spelling.
+        dynamic_names = result.dynamic_used_names
+        fallback_names = uncertain_names | dynamic_names
+
+        def is_used(item):
+            if item.qualified_name is None:
+                return item.name in result.used_names
+            if item.typ == "import":
+                return (
+                    item.filename.resolve(),
+                    item.first_lineno,
+                    item.name,
+                ) in used_imports or item.name in dynamic_names
+            return (
+                item.qualified_name in used_targets
+                or item.name in fallback_names
+            )
+
+        unused = {item for item in result.defined_items if not is_used(item)}
+        unused.update(result.unreachable_code)
+
+        def sort_key(item):
+            location = (str(item.filename).lower(), item.first_lineno)
+            return (item.size, *location) if sort_by_size else location
+
+        return sorted(
+            (item for item in unused if item.confidence >= min_confidence),
+            key=sort_key,
+        )

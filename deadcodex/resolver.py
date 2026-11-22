@@ -184,6 +184,7 @@ class ReferenceResolver:
         reference.status = ResolutionStatus.PENDING
         reference.target = None
         reference.binding_target = None
+        reference.import_bindings = ()
         if not reference.parts:
             reference.status = ResolutionStatus.UNRESOLVED
             return
@@ -215,6 +216,7 @@ class ReferenceResolver:
         )
 
     def _resolve_imported_reference(self, reference, bindings, index):
+        reference.import_bindings = bindings
         statuses = {binding.status for binding in bindings}
         binding_targets = {
             binding.target

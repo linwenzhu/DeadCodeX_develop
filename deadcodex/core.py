@@ -6,6 +6,7 @@ from collections import defaultdict
 from pathlib import Path
 
 from deadcodex import utils
+from deadcodex.analysis import ProjectAnalysis
 from deadcodex.callgraph import (
     CALLABLE_TYPES,
     CallGraphBuilder,
@@ -14,6 +15,7 @@ from deadcodex.callgraph import (
 from deadcodex.collector import AstCollector, _match
 from deadcodex.model import CallGraph, ProjectModel, ResolutionStatus
 from deadcodex.parser import PythonParser
+from deadcodex.pipeline import ProjectAnalyzer
 from deadcodex.project import ProjectLoader
 from deadcodex.resolver import ImportResolver, ReferenceResolver
 from deadcodex.scope import ScopeCollector
@@ -176,11 +178,35 @@ class DeadCodex(AstCollector):
 
     def analyze_reachability(self, entry_points=()):
         """Traverse known call edges from explicit qualified entry points."""
-        self.resolve_references()
-        self.project_reachability = self.project_reachability_analyzer.analyze(
-            self.project, self.defined_items, self.call_graph, entry_points
+        entries = tuple(entry_points)
+        if not entries:
+            raise ValueError("At least one entry point is required.")
+        return self.run_pipeline(entries).reachability
+
+    def run_pipeline(self, entry_points=()):
+        """Run ordered analysis on all currently collected project facts."""
+        pipeline = ProjectAnalyzer(
+            self.call_graph_builder, self.project_reachability_analyzer
         )
-        return self.project_reachability
+        result = pipeline.analyze(
+            self.project, self.defined_items, entry_points
+        )
+        self.call_graph = result.call_graph
+        self.project_reachability = result.reachability
+        return result
+
+    def get_unused_code(
+        self, min_confidence=0, sort_by_size=False, *, qualified=False
+    ):
+        """Use legacy name matching unless qualified analysis is requested."""
+        if not qualified:
+            return super().get_unused_code(min_confidence, sort_by_size)
+        if not 0 <= min_confidence <= 100:
+            raise ValueError("min_confidence must be between 0 and 100.")
+        self.run_pipeline()
+        return ProjectAnalysis().analyze(
+            self.project, self, min_confidence, sort_by_size
+        )
 
     def get_unused_code_project(
         self, entry_points=(), min_confidence=0, sort_by_size=False
@@ -229,11 +255,10 @@ class DeadCodex(AstCollector):
             if item.typ in CALLABLE_TYPES
             and item.qualified_name in result.unreachable - protected
         }
-        # Non-callable findings retain legacy analysis until stage seven
-        # introduces the qualified-name analysis pipeline.
+        # Reuse references already resolved by analyze_reachability.
         items.update(
             item
-            for item in super().get_unused_code()
+            for item in ProjectAnalysis().analyze(self.project, self)
             if item.typ not in CALLABLE_TYPES
         )
         findings = [
