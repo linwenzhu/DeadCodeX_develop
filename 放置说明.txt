@@ -1,0 +1,36 @@
+【F 第二步 · 报告和交付 —— 待提交文件清单】
+
+一、直接复制进仓库（保持目录结构）
+  deadcodex/reporters.py        → deadcodex/ 目录（新增）
+  deadcodex/baseline.py         → deadcodex/ 目录（新增）
+  tests/test_report.py          → tests/ 目录（新增）
+  tests/test_reporters.py       → tests/ 目录（新增）
+  tests/test_baseline.py        → tests/ 目录（新增）
+  tests/test_delivery.py        → tests/ 目录（新增）
+  tests/test_examples.py        → tests/ 目录（新增）
+  tests/test_make_whitelist.py  → tests/ 目录（新增）
+  MANIFEST.in                   → 根目录（新增）
+  setup.cfg                     → 根目录（新增，若已存在则核对内容）
+  requirements.txt              → 根目录（新增，若已存在则核对内容）
+  examples/demo_project/app.py  → examples/demo_project/（若已有则核对）
+  examples/README.md            → examples/（若已有完整索引，只核对 demo_project 行）
+
+二、手工修改（core.py 按 core.py改动片段.txt 只改三处）
+  deadcodex/core.py             → 新增 2 行 import + report() 方法 + main() 调用参数
+
+三、文档
+  README补充段落.txt 里的内容 → 追加到 README.md（已存在就不重复加）
+
+四、绝对不要做的事
+  1. 不要整文件复制 core.py 覆盖仓库版本（会覆盖 A/B/C/D/E 的方法，造成冲突）。
+  2. 不要提交 dist/、.venv、.to-x、htmlcov、coverage.xml、*.egg-info。
+  3. 不要改 examples/demo_project/app.py 里 old_format_user 的函数名——
+     test_delivery.py 断言该 Demo 的函数级死代码恰好是 {"old_format_user"}。
+  4. 本步只做“报告与交付”，不要再改其他成员模块的实现。
+
+五、提交前验证（全部通过才提交）
+  uvx ruff check deadcodex tests
+  uvx ruff format --check deadcodex tests
+  tox -e py                     # 预期 377 passed
+  uv build                      # 生成 dist/*.whl 与 *.tar.gz
+  # 再用干净 venv 安装 wheel，跑 CLI（详见对话步骤）
