@@ -6,6 +6,10 @@ from collections import defaultdict
 from pathlib import Path
 
 from deadcodex import utils
+from deadcodex.adapters import (
+    DecoratorEntryPointAdapter,
+    make_framework_adapter,
+)
 from deadcodex.analysis import ProjectAnalysis
 from deadcodex.callgraph import (
     CALLABLE_TYPES,
@@ -13,6 +17,7 @@ from deadcodex.callgraph import (
     ReachabilityAnalyzer,
 )
 from deadcodex.collector import AstCollector, _match
+from deadcodex.config import InputError, make_config
 from deadcodex.model import CallGraph, ProjectModel, ResolutionStatus
 from deadcodex.parser import PythonParser
 from deadcodex.pipeline import ProjectAnalyzer
@@ -176,9 +181,15 @@ class DeadCodex(AstCollector):
         )
         return self.call_graph
 
-    def analyze_reachability(self, entry_points=()):
-        """Traverse known call edges from explicit qualified entry points."""
-        entries = tuple(entry_points)
+    def _entry_points(self, entry_points, providers):
+        entries = list(entry_points)
+        for provider in providers:
+            entries.extend(provider.discover(self.project, self.defined_items))
+        return entries
+
+    def analyze_reachability(self, entry_points=(), entry_point_providers=()):
+        """Traverse known calls from explicit or discovered entry points."""
+        entries = self._entry_points(entry_points, entry_point_providers)
         if not entries:
             raise ValueError("At least one entry point is required.")
         return self.run_pipeline(entries).reachability
@@ -209,12 +220,16 @@ class DeadCodex(AstCollector):
         )
 
     def get_unused_code_project(
-        self, entry_points=(), min_confidence=0, sort_by_size=False
+        self,
+        entry_points=(),
+        min_confidence=0,
+        sort_by_size=False,
+        entry_point_providers=(),
     ):
         """Report experimental project-level unreachable callables."""
         if not 0 <= min_confidence <= 100:
             raise ValueError("min_confidence must be between 0 and 100.")
-        result = self.analyze_reachability(entry_points)
+        result = self.analyze_reachability(entry_points, entry_point_providers)
         invalid = (
             result.unresolved_entry_points | result.ambiguous_entry_points
         )
@@ -271,15 +286,87 @@ class DeadCodex(AstCollector):
 
         return sorted(findings, key=sort_key)
 
-    def report(self):
-        """Reporting is connected during F's second submission."""
+    def report(
+        self,
+        min_confidence=0,
+        sort_by_size=False,
+        make_whitelist=False,
+        entry_points=None,
+        entry_point_providers=(),
+        output_format="text",
+        output="",
+        baseline="",
+        update_baseline=False,
+    ):
+        """Report findings as text and return the scan exit code."""
+        if self.exit_code == ExitCode.InvalidInput:
+            return self.exit_code
+        if output_format != "text":
+            raise ValueError("Only text reports are available at this stage.")
+        if baseline or update_baseline:
+            raise ValueError(
+                "Baseline reports are not available at this stage."
+            )
 
-        raise NotImplementedError
+        entries = self._entry_points(entry_points or (), entry_point_providers)
+        if entries:
+            findings = self.get_unused_code_project(
+                entries, min_confidence, sort_by_size
+            )
+        else:
+            findings = self.get_unused_code(min_confidence, sort_by_size)
+
+        lines = [
+            item.get_whitelist_string()
+            if make_whitelist
+            else item.get_report(add_size=sort_by_size)
+            for item in findings
+        ]
+        if output:
+            content = "\n".join(lines) + ("\n" if lines else "")
+            Path(output).write_text(content, encoding="utf-8")
+        elif lines:
+            self._log("\n".join(lines), force=True)
+        self.exit_code = ExitCode.DeadCode if findings else ExitCode.NoDeadCode
+        return self.exit_code
 
 
 def main():
-    """The CLI is connected during E's submission."""
+    try:
+        config = make_config()
+    except InputError as error:
+        print(error, file=sys.stderr)
+        sys.exit(ExitCode.InvalidCmdlineArguments)
 
-    raise SystemExit(
-        "DeadCodeX parser and collector are ready; CLI integration pending."
+    deadcodex = DeadCodex(
+        verbose=config["verbose"],
+        ignore_names=config["ignore_names"],
+        ignore_decorators=config["ignore_decorators"],
     )
+    entry_point_providers = [
+        make_framework_adapter(name) for name in config["frameworks"]
+    ]
+    if config["entry_point_decorators"]:
+        entry_point_providers.append(
+            DecoratorEntryPointAdapter(tuple(config["entry_point_decorators"]))
+        )
+    try:
+        deadcodex.scavenge(config["paths"], exclude=config["exclude"])
+        exit_code = deadcodex.report(
+            min_confidence=config["min_confidence"],
+            sort_by_size=config["sort_by_size"],
+            make_whitelist=config["make_whitelist"],
+            entry_points=config["entry_points"],
+            entry_point_providers=tuple(entry_point_providers),
+            output_format=config["output_format"],
+            output=config["output"],
+            baseline=config["baseline"],
+            update_baseline=config["update_baseline"],
+        )
+    except ValueError as error:
+        print(error, file=sys.stderr)
+        sys.exit(ExitCode.InvalidCmdlineArguments)
+    except OSError as error:
+        print(error, file=sys.stderr)
+        sys.exit(ExitCode.InvalidInput)
+    sys.exit(exit_code)
