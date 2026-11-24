@@ -55,6 +55,10 @@ def _check_input_config(data):
         if type(value) is not type(DEFAULTS[key]):
             expected_type = type(DEFAULTS[key]).__name__
             raise InputError(f"Data type for {key} must be {expected_type!r}")
+        if isinstance(value, list) and any(
+            not isinstance(item, str) for item in value
+        ):
+            raise InputError(f"{key} must be a list of strings")
 
 
 def _check_output_config(config):
@@ -66,6 +70,10 @@ def _check_output_config(config):
     """
     if not config["paths"]:
         raise InputError("Please pass at least one file or directory")
+    if not 0 <= config["min_confidence"] <= 100:
+        raise InputError("min_confidence must be between 0 and 100")
+    if config["output_format"] not in {"text", "json", "html"}:
+        raise InputError(f"Unknown report format: {config['output_format']}")
     if config["make_whitelist"] and config["output_format"] != "text":
         raise InputError("Whitelist output requires the text format")
     if config["update_baseline"] and not config["baseline"]:
@@ -99,8 +107,16 @@ def _parse_toml(infile):
         verbose = true
         paths = ["path1", "path2"]
     """
-    data = tomllib.load(infile)
-    settings = data.get("tool", {}).get(CONFIG_SECTION, {})
+    try:
+        data = tomllib.load(infile)
+    except (tomllib.TOMLDecodeError, UnicodeDecodeError) as error:
+        raise InputError(f"Invalid TOML configuration: {error}") from error
+    tool_settings = data.get("tool", {})
+    if not isinstance(tool_settings, dict):
+        raise InputError("TOML tool must be a table")
+    settings = tool_settings.get(CONFIG_SECTION, {})
+    if not isinstance(settings, dict):
+        raise InputError("TOML tool.deadcodex must be a table")
     _check_input_config(settings)
     return settings
 
@@ -232,7 +248,7 @@ def _parse_args(args=None):
     parser.add_argument(
         "--config",
         type=str,
-        default="pyproject.toml",
+        default=missing,
         help="Path to pyproject.toml config file.",
     )
     parser.add_argument(
@@ -272,10 +288,15 @@ def make_config(argv=None, tomlfile=None):
         config = _parse_toml(tomlfile)
         detected_toml_path = str(tomlfile)
     else:
-        toml_path = pathlib.Path(cli_config["config"]).resolve()
-        if toml_path.is_file():
-            with open(toml_path, "rb") as fconfig:
-                config = _parse_toml(fconfig)
+        toml_path = pathlib.Path(cli_config.get("config", DEFAULTS["config"]))
+        if "config" in cli_config or toml_path.is_file():
+            try:
+                with toml_path.open("rb") as fconfig:
+                    config = _parse_toml(fconfig)
+            except OSError as error:
+                raise InputError(
+                    f"Could not read configuration {toml_path}: {error}"
+                ) from error
             detected_toml_path = str(toml_path)
         else:
             config = {}

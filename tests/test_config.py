@@ -38,7 +38,6 @@ def test_cli_args():
         frameworks=["flask", "fastapi"],
         ignore_decorators=["deco1", "deco2"],
         ignore_names=["name1", "name2"],
-        config="pyproject.toml",
         make_whitelist=True,
         min_confidence=10,
         output="report.txt",
