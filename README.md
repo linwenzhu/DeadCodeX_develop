@@ -3,9 +3,29 @@
 DeadCodeX is a cross-file and framework-aware dead code analyzer for Python
 projects.
 
-This initial commit establishes the project architecture and public module
-boundaries. Analysis algorithms, framework rules, reports, tests, examples,
-and CI configuration will be implemented in later development commits.
+## Run a scan
+
+```bash
+uv sync --locked
+uv run deadcodex path/to/project
+uv run deadcodex examples/demo_project --framework fastapi --format json
+uv run deadcodex examples/demo_project --framework fastapi --format html --output report.html
+```
+
+Use `--entry-point package.module.function` or a framework adapter to analyze
+which callables are reachable. Paths and options can also be configured in
+`[tool.deadcodex]` in `pyproject.toml` or an explicit `--config` file.
+
+Save the current findings to a baseline, then use it to report new findings:
+
+```bash
+uv run deadcodex path/to/project --baseline baseline.json --update-baseline
+uv run deadcodex path/to/project --baseline baseline.json
+```
+
+Exit codes are `0` for no reportable findings or a successful baseline update,
+`1` for invalid input, `2` for invalid arguments or configuration, and `3`
+when findings are reported. See the [examples](examples/README.md) for more.
 
 ## Architecture
 

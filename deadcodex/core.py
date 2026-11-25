@@ -1,8 +1,9 @@
-"""Public facade for the stage-A parser and collector workflow."""
+"""Public API and command-line entry point for DeadCodeX."""
 
 import pkgutil
 import sys
 from collections import defaultdict
+from contextlib import redirect_stdout
 from pathlib import Path
 
 from deadcodex import utils
@@ -11,6 +12,7 @@ from deadcodex.adapters import (
     make_framework_adapter,
 )
 from deadcodex.analysis import ProjectAnalysis
+from deadcodex.baseline import Baseline
 from deadcodex.callgraph import (
     CALLABLE_TYPES,
     CallGraphBuilder,
@@ -22,6 +24,7 @@ from deadcodex.model import CallGraph, ProjectModel, ResolutionStatus
 from deadcodex.parser import PythonParser
 from deadcodex.pipeline import ProjectAnalyzer
 from deadcodex.project import ProjectLoader
+from deadcodex.reporters import make_reporter
 from deadcodex.resolver import ImportResolver, ReferenceResolver
 from deadcodex.scope import ScopeCollector
 from deadcodex.utils import ExitCode
@@ -298,15 +301,12 @@ class DeadCodex(AstCollector):
         baseline="",
         update_baseline=False,
     ):
-        """Report findings as text and return the scan exit code."""
+        """Report unused code or update a baseline and return the exit code."""
         if self.exit_code == ExitCode.InvalidInput:
             return self.exit_code
-        if output_format != "text":
-            raise ValueError("Only text reports are available at this stage.")
-        if baseline or update_baseline:
-            raise ValueError(
-                "Baseline reports are not available at this stage."
-            )
+        if make_whitelist and output_format != "text":
+            raise ValueError("Whitelist output requires the text format.")
+        reporter = make_reporter(output_format, sort_by_size=sort_by_size)
 
         entries = self._entry_points(entry_points or (), entry_point_providers)
         if entries:
@@ -316,17 +316,28 @@ class DeadCodex(AstCollector):
         else:
             findings = self.get_unused_code(min_confidence, sort_by_size)
 
-        lines = [
-            item.get_whitelist_string()
-            if make_whitelist
-            else item.get_report(add_size=sort_by_size)
-            for item in findings
-        ]
-        if output:
+        if update_baseline:
+            if not baseline:
+                raise ValueError(
+                    "Updating a baseline requires a baseline path."
+                )
+            Baseline.from_items(findings, self.project.root).write(baseline)
+            self.exit_code = ExitCode.NoDeadCode
+            return self.exit_code
+        if baseline:
+            findings = Baseline.load(baseline).filter(
+                findings, self.project.root
+            )
+
+        if make_whitelist:
+            lines = [item.get_whitelist_string() for item in findings]
             content = "\n".join(lines) + ("\n" if lines else "")
+        else:
+            content = reporter.render(findings)
+        if output:
             Path(output).write_text(content, encoding="utf-8")
-        elif lines:
-            self._log("\n".join(lines), force=True)
+        elif content:
+            self._log(content.removesuffix("\n"), force=True)
         self.exit_code = ExitCode.DeadCode if findings else ExitCode.NoDeadCode
         return self.exit_code
 
@@ -351,7 +362,8 @@ def main():
             DecoratorEntryPointAdapter(tuple(config["entry_point_decorators"]))
         )
     try:
-        deadcodex.scavenge(config["paths"], exclude=config["exclude"])
+        with redirect_stdout(sys.stderr):
+            deadcodex.scavenge(config["paths"], exclude=config["exclude"])
         exit_code = deadcodex.report(
             min_confidence=config["min_confidence"],
             sort_by_size=config["sort_by_size"],

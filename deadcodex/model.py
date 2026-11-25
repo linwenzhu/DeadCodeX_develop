@@ -299,6 +299,7 @@ class Item:
         "decorators",
         "filename",
         "first_lineno",
+        "import_source",
         "last_lineno",
         "message",
         "name",
@@ -317,6 +318,7 @@ class Item:
         confidence=DEFAULT_CONFIDENCE,
         qualified_name=None,
         decorators=(),
+        import_source="",
     ):
         self.name: str = name
         self.typ: str = typ
@@ -327,6 +329,7 @@ class Item:
         self.confidence: int = confidence
         self.qualified_name: Optional[QualifiedName] = qualified_name
         self.decorators: tuple[str, ...] = tuple(decorators)
+        self.import_source: str = import_source
 
     @property
     def size(self):
