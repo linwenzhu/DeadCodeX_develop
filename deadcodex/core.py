@@ -18,9 +18,12 @@ from deadcodex.callgraph import (
     CallGraphBuilder,
     ReachabilityAnalyzer,
 )
+from deadcodex.collector import ERROR_CODES as ERROR_CODES
 from deadcodex.collector import AstCollector, _match
 from deadcodex.config import InputError, make_config
+from deadcodex.model import DEFAULT_CONFIDENCE as DEFAULT_CONFIDENCE
 from deadcodex.model import CallGraph, ProjectModel, ResolutionStatus
+from deadcodex.model import Item as Item
 from deadcodex.parser import PythonParser
 from deadcodex.pipeline import ProjectAnalyzer
 from deadcodex.project import ProjectLoader
@@ -48,6 +51,14 @@ class DeadCodex(AstCollector):
         self.exit_code = ExitCode.NoDeadCode
         self.call_graph_builder = CallGraphBuilder()
         self.project_reachability_analyzer = ReachabilityAnalyzer()
+        self.import_resolver = ImportResolver()
+        self.reference_resolver = ReferenceResolver()
+        self.project_analyzer = ProjectAnalyzer(
+            self.call_graph_builder,
+            self.project_reachability_analyzer,
+            import_resolver=self.import_resolver,
+            reference_resolver=self.reference_resolver,
+        )
         self.call_graph = CallGraph()
         self.project_reachability = None
 
@@ -103,8 +114,8 @@ class DeadCodex(AstCollector):
         )
         self.exit_code = ExitCode.InvalidInput
 
-    def scavenge(self, paths, exclude=None):
-        """Discover Python files, scan them, and include known whitelists."""
+    def scavenge(self, paths, exclude=None, *, resolve=True):
+        """Scan files, include known whitelists and resolve project facts."""
 
         def prepare_pattern(pattern):
             if not any(char in pattern for char in "*?["):
@@ -153,36 +164,18 @@ class DeadCodex(AstCollector):
             self._log("Included whitelist:", path)
             self.scan(module_data.decode("utf-8"), filename=path)
 
+        if resolve:
+            self.resolve_references()
+
     def resolve_imports(self):
         """Resolve collected imports against modules in the project."""
 
-        definitions = (
-            self.defined_attrs
-            + self.defined_classes
-            + self.defined_funcs
-            + self.defined_methods
-            + self.defined_props
-            + self.defined_vars
-        )
-        ImportResolver(definitions).resolve(self.project)
+        return self.import_resolver.resolve(self.project, self.defined_items)
 
     def resolve_references(self):
         """Resolve collected references after import resolution."""
 
-        definitions = (
-            self.defined_attrs
-            + self.defined_classes
-            + self.defined_funcs
-            + self.defined_methods
-            + self.defined_props
-            + self.defined_vars
-        )
-        self.resolve_imports()
-        ReferenceResolver(definitions).resolve(self.project)
-        self.call_graph = self.call_graph_builder.build(
-            self.project, self.defined_items
-        )
-        return self.call_graph
+        return self.run_pipeline().call_graph
 
     def _entry_points(self, entry_points, providers):
         entries = list(entry_points)
@@ -199,10 +192,7 @@ class DeadCodex(AstCollector):
 
     def run_pipeline(self, entry_points=()):
         """Run ordered analysis on all currently collected project facts."""
-        pipeline = ProjectAnalyzer(
-            self.call_graph_builder, self.project_reachability_analyzer
-        )
-        result = pipeline.analyze(
+        result = self.project_analyzer.analyze(
             self.project, self.defined_items, entry_points
         )
         self.call_graph = result.call_graph
@@ -210,7 +200,7 @@ class DeadCodex(AstCollector):
         return result
 
     def get_unused_code(
-        self, min_confidence=0, sort_by_size=False, *, qualified=False
+        self, min_confidence=0, sort_by_size=False, qualified=False
     ):
         """Use legacy name matching unless qualified analysis is requested."""
         if not qualified:
@@ -218,8 +208,13 @@ class DeadCodex(AstCollector):
         if not 0 <= min_confidence <= 100:
             raise ValueError("min_confidence must be between 0 and 100.")
         self.run_pipeline()
-        return ProjectAnalysis().analyze(
-            self.project, self, min_confidence, sort_by_size
+        references = (
+            reference
+            for module in self.project.modules
+            for reference in module.references
+        )
+        return self.get_unused_code_qualified(
+            references, min_confidence, sort_by_size
         )
 
     def get_unused_code_project(
@@ -363,7 +358,9 @@ def main():
         )
     try:
         with redirect_stdout(sys.stderr):
-            deadcodex.scavenge(config["paths"], exclude=config["exclude"])
+            deadcodex.scavenge(
+                config["paths"], exclude=config["exclude"], resolve=False
+            )
         exit_code = deadcodex.report(
             min_confidence=config["min_confidence"],
             sort_by_size=config["sort_by_size"],

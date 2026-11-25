@@ -99,6 +99,16 @@ class UsageReference:
         default=(), repr=False, compare=False
     )
 
+    @property
+    def local_binding_name(self) -> Optional[QualifiedName]:
+        """Return the name introduced in the importing scope."""
+        if not self.import_bindings:
+            return None
+        binding = self.import_bindings[0]
+        if binding.scope_name is None:
+            return None
+        return binding.scope_name.child(binding.bound_name)
+
 
 @dataclass
 class CallSite:
@@ -191,6 +201,7 @@ class Scope:
     first_lineno: int = 1
     last_lineno: Optional[int] = None
     children: list["Scope"] = field(default_factory=list)
+    receiver_name: Optional[str] = None
 
     @property
     def name(self):
