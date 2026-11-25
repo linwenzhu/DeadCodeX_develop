@@ -39,12 +39,11 @@ def test_builds_cross_module_call_edge(tmp_path):
     analyzer = core.DeadCodex()
 
     analyzer.scavenge([tmp_path])
-    analyzer.resolve_references()
 
     assert _edges(analyzer) == {("b", "a.worker")}
 
 
-def test_static_method_edge_and_unresolved_instance_call():
+def test_static_and_instance_method_edges():
     analyzer = core.DeadCodex()
     analyzer.scan(
         "class Service:\n"
@@ -60,6 +59,7 @@ def test_static_method_edge_and_unresolved_instance_call():
 
     assert _edges(analyzer) == {
         ("module", "module.Service.run"),
+        ("module.Service.run", "module.Service.helper"),
     }
 
     dynamic = next(
@@ -67,7 +67,7 @@ def test_static_method_edge_and_unresolved_instance_call():
         for c in analyzer.call_graph.calls
         if c.callee_parts == ("self", "helper")
     )
-    assert dynamic.status is ResolutionStatus.UNRESOLVED
+    assert dynamic.status is ResolutionStatus.RESOLVED
 
 
 def test_keeps_external_and_dynamic_calls_without_local_edges():
@@ -82,6 +82,35 @@ def test_keeps_external_and_dynamic_calls_without_local_edges():
     assert analyzer.call_graph_builder.status_counts == {
         ResolutionStatus.EXTERNAL: 1,
         ResolutionStatus.UNRESOLVED: 2,
+    }
+
+
+def test_class_method_receiver_is_reachable_and_unrelated_parameters_are_not():
+    analyzer = core.DeadCodex()
+    analyzer.scan(
+        "class Service:\n"
+        "    @classmethod\n"
+        "    def helper(cls):\n"
+        "        pass\n"
+        "    @classmethod\n"
+        "    def entry(cls):\n"
+        "        cls.helper()\n"
+        "    @staticmethod\n"
+        "    def other(self):\n"
+        "        self.helper()\n"
+        "    def rebound(self, other):\n"
+        "        self = other\n"
+        "        self.helper()\n",
+        filename="module.py",
+    )
+
+    result = analyzer.analyze_reachability(["module.Service.entry"])
+    assert tuple(map(str, result.path_to("module.Service.helper"))) == (
+        "module.Service.entry",
+        "module.Service.helper",
+    )
+    assert _edges(analyzer) == {
+        ("module.Service.entry", "module.Service.helper")
     }
 
 

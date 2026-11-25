@@ -8,10 +8,11 @@ from deadcodex.adapters import (
     FrameworkAdapter,
 )
 from deadcodex.core import DeadCodex
-from deadcodex.pipeline import PipelineResult, ProjectAnalyzer
+from deadcodex.pipeline import Analyzer, PipelineResult, ProjectAnalyzer
 from deadcodex.version import __version__
 
 __all__ = [
+    "Analyzer",
     "DeadCodex",
     "DecoratorEntryPointAdapter",
     "EntryPointProvider",

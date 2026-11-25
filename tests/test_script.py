@@ -1,6 +1,10 @@
 """Tests for the explicit command-line entry point."""
 
+import glob
 import json
+import os.path
+import subprocess
+import sys
 
 import pytest
 
@@ -8,7 +12,7 @@ from deadcodex import core
 from deadcodex.utils import ExitCode
 from deadcodex.version import __version__
 
-from . import call_deadcodex
+from . import REPO, WHITELISTS, call_deadcodex
 
 
 def test_version_flag_prints_version_and_exits(monkeypatch, capsys):
@@ -181,3 +185,245 @@ def test_scan_error_takes_precedence_over_findings(tmp_path, capfd):
     captured = capfd.readouterr()
     assert "broken.py" in captured.err
     assert not captured.out
+
+
+def test_module_with_explicit_whitelists():
+    assert call_deadcodex(["deadcodex/", *WHITELISTS]) == ExitCode.NoDeadCode
+
+
+def test_module_with_implicit_whitelists():
+    assert call_deadcodex(["deadcodex/"]) == ExitCode.NoDeadCode
+
+
+def test_module_without_whitelists():
+    assert (
+        call_deadcodex(["deadcodex/", "--exclude", "whitelists"])
+        == ExitCode.DeadCode
+    )
+
+
+def test_missing_file():
+    assert call_deadcodex(["missing.py"]) == ExitCode.InvalidInput
+
+
+def test_tests():
+    assert call_deadcodex(["tests/"]) == ExitCode.NoDeadCode
+
+
+def test_whitelists_with_python():
+    for whitelist in WHITELISTS:
+        assert (
+            subprocess.call([sys.executable, whitelist], cwd=REPO)
+            == ExitCode.NoDeadCode
+        )
+
+
+def test_pyc():
+    assert call_deadcodex(["missing.pyc"]) == 1
+
+
+def test_sort_by_size():
+    assert (
+        call_deadcodex(["deadcodex/utils.py", "--sort-by-size"])
+        == ExitCode.DeadCode
+    )
+
+
+def test_min_confidence():
+    assert (
+        call_deadcodex(
+            [
+                "deadcodex/core.py",
+                "--exclude",
+                "whitelists",
+                "--min-confidence",
+                "100",
+            ]
+        )
+        == ExitCode.NoDeadCode
+    )
+
+
+def test_exclude():
+    def get_csv(paths):
+        return ",".join(os.path.join("deadcodex", path) for path in paths)
+
+    def call_deadcodex_with_excludes(excludes):
+        return call_deadcodex(["deadcodex/", "--exclude", get_csv(excludes)])
+
+    assert (
+        call_deadcodex_with_excludes(["core.py", "utils.py"])
+        == ExitCode.DeadCode
+    )
+    assert (
+        call_deadcodex_with_excludes(glob.glob("deadcodex/*.py"))
+        == ExitCode.NoDeadCode
+    )
+
+
+def test_make_whitelist():
+    assert (
+        call_deadcodex(
+            ["deadcodex/", "--make-whitelist", "--exclude", "whitelists"]
+        )
+        == ExitCode.DeadCode
+    )
+    assert (
+        call_deadcodex(["deadcodex/", "--make-whitelist"])
+        == ExitCode.NoDeadCode
+    )
+
+
+def test_version():
+    assert call_deadcodex(["--version"]) == ExitCode.NoDeadCode
+
+
+def test_deadcodex_module_is_the_primary_cli():
+    version_result = subprocess.run(
+        [sys.executable, "-m", "deadcodex", "--version"],
+        cwd=REPO,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    help_result = subprocess.run(
+        [sys.executable, "-m", "deadcodex", "--help"],
+        cwd=REPO,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert version_result.returncode == ExitCode.NoDeadCode
+    assert version_result.stdout == f"deadcodex {__version__}\n"
+    assert help_result.returncode == ExitCode.NoDeadCode
+    assert help_result.stdout.startswith("usage: deadcodex ")
+
+
+def test_project_aware_entry_point_distinguishes_same_named_functions(
+    tmp_path,
+):
+    (tmp_path / "a.py").write_text("def run():\n    pass\n", encoding="utf-8")
+    (tmp_path / "b.py").write_text("def run():\n    pass\n", encoding="utf-8")
+    (tmp_path / "app.py").write_text(
+        "from a import run\nrun()\n", encoding="utf-8"
+    )
+
+    default_result = subprocess.run(
+        [sys.executable, "-m", "deadcodex", str(tmp_path)],
+        cwd=REPO,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    project_result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "deadcodex",
+            "--entry-point",
+            "app",
+            str(tmp_path),
+        ],
+        cwd=REPO,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert default_result.returncode == ExitCode.NoDeadCode
+    assert default_result.stdout == ""
+    assert project_result.returncode == ExitCode.DeadCode
+    assert "b.py:1: unused function 'run'" in project_result.stdout
+
+
+def test_project_aware_entry_point_reports_invalid_name(tmp_path):
+    module = tmp_path / "module.py"
+    module.write_text("def function():\n    pass\n", encoding="utf-8")
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "deadcodex",
+            "--entry-point",
+            "missing",
+            str(module),
+        ],
+        cwd=REPO,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == ExitCode.InvalidCmdlineArguments
+    assert "unresolved entry point: missing" in result.stderr
+
+
+def test_project_aware_decorator_entry_point(tmp_path):
+    module = tmp_path / "app.py"
+    module.write_text(
+        "def helper():\n"
+        "    pass\n"
+        "@router.get('/')\n"
+        "def endpoint():\n"
+        "    helper()\n"
+        "def dead():\n"
+        "    pass\n",
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "deadcodex",
+            "--entry-point-decorator",
+            "router.*",
+            str(module),
+        ],
+        cwd=REPO,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == ExitCode.DeadCode
+    assert "unused function 'dead'" in result.stdout
+    assert "unused function 'endpoint'" not in result.stdout
+    assert "unused function 'helper'" not in result.stdout
+
+
+def test_fastapi_framework_entry_point(tmp_path):
+    module = tmp_path / "app.py"
+    module.write_text(
+        "@router.get('/users')\n"
+        "def users():\n"
+        "    serialize()\n"
+        "def serialize():\n"
+        "    pass\n"
+        "def obsolete():\n"
+        "    pass\n",
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "deadcodex",
+            "--framework",
+            "fastapi",
+            str(module),
+        ],
+        cwd=REPO,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == ExitCode.DeadCode
+    assert "unused function 'obsolete'" in result.stdout
+    assert "unused function 'users'" not in result.stdout
+    assert "unused function 'serialize'" not in result.stdout

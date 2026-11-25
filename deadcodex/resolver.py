@@ -1,7 +1,7 @@
 """Resolve imports and name references across project modules."""
 
 import builtins
-from collections import defaultdict
+from collections import Counter, defaultdict
 
 from deadcodex.model import (
     ImportKind,
@@ -30,17 +30,27 @@ def _extend(name, dotted_name):
 class _ProjectIndex:
     def __init__(self, project, definitions=()):
         self.modules_by_name = defaultdict(list)
+        self.package_exports = defaultdict(list)
         for module in project.modules:
             self.modules_by_name[module.qualified_name].append(module)
+            if module.is_package:
+                for binding in module.imports:
+                    if (
+                        binding.bound_name
+                        and binding.bound_name != "*"
+                        and binding.scope_name in (None, module.qualified_name)
+                    ):
+                        name = module.qualified_name.child(binding.bound_name)
+                        self.package_exports[name].append((module, binding))
 
         self.top_level_names = {name.parts[0] for name in self.modules_by_name}
-        self.definition_names = set()
+        self.definition_origins = defaultdict(set)
         self.definitions_by_qualified_name = defaultdict(list)
         for definition in definitions:
             name = getattr(definition, "qualified_name", None)
-            if name is None:
+            if name is None or definition.typ == "import":
                 continue
-            self.definition_names.add(name)
+            self.definition_origins[name].add(definition.filename.resolve())
             self.definitions_by_qualified_name[name].append(definition)
 
     def module_status(self, name):
@@ -60,12 +70,50 @@ class _ProjectIndex:
 
     def qualified_status(self, name):
         matches = len(self.modules_by_name.get(name, ()))
-        matches += int(name in self.definition_names)
+        matches += len(self.definition_origins.get(name, ()))
         if matches == 1:
             return ResolutionStatus.RESOLVED
         if matches > 1:
             return ResolutionStatus.AMBIGUOUS
         return self.module_status(name)
+
+    def resolve_symbol(self, name, resolve_export=None):
+        status = self.qualified_status(name)
+        if status is not ResolutionStatus.UNRESOLVED:
+            return status, (
+                name if status is ResolutionStatus.RESOLVED else None
+            )
+
+        for stop in range(len(name.parts), 1, -1):
+            prefix = QualifiedName(name.parts[:stop])
+            exports = self.package_exports.get(prefix, ())
+            if not exports:
+                continue
+            if (
+                len(exports) > 1
+                or len(self.modules_by_name[prefix.parent]) > 1
+            ):
+                return ResolutionStatus.AMBIGUOUS, None
+            module, binding = exports[0]
+            if resolve_export is not None:
+                resolve_export(module, binding)
+            status, target = binding.status, binding.target
+            if status is ResolutionStatus.PENDING:
+                return ResolutionStatus.UNRESOLVED, None
+            if (
+                target is not None
+                and binding.kind is ImportKind.MODULE
+                and binding.alias is None
+            ):
+                target = QualifiedName((binding.bound_name,))
+            if target is not None and stop < len(name.parts):
+                target = QualifiedName((*target.parts, *name.parts[stop:]))
+                if status is ResolutionStatus.RESOLVED:
+                    status = self.qualified_status(target)
+                    if status is not ResolutionStatus.RESOLVED:
+                        target = None
+            return status, target
+        return ResolutionStatus.UNRESOLVED, None
 
 
 class ImportResolver:
@@ -74,15 +122,43 @@ class ImportResolver:
     def __init__(self, definitions=()):
         self.definitions = tuple(definitions)
 
-    def resolve(self, project: ProjectModel) -> None:
-        index = _ProjectIndex(project, self.definitions)
-        for module in project.modules:
-            for binding in module.imports:
-                self._resolve_binding(module, binding, index)
+    def resolve(
+        self, project: ProjectModel, defined_items=None
+    ) -> ProjectModel:
+        definitions = (
+            self.definitions if defined_items is None else defined_items
+        )
+        index = _ProjectIndex(project, definitions)
+        self.status_counts = Counter()
+        pending = [
+            (module, binding)
+            for module in project.modules
+            for binding in module.imports
+        ]
+        for _, binding in pending:
+            binding.status = ResolutionStatus.PENDING
+            binding.target = None
 
-    def _resolve_binding(self, module, binding, index):
-        binding.status = ResolutionStatus.PENDING
-        binding.target = None
+        active = set()
+
+        def resolve_export(module, binding):
+            if (
+                binding.status is not ResolutionStatus.PENDING
+                or id(binding) in active
+            ):
+                return
+            active.add(id(binding))
+            try:
+                self._resolve_binding(module, binding, index, resolve_export)
+            finally:
+                active.remove(id(binding))
+
+        for module, binding in pending:
+            resolve_export(module, binding)
+            self.status_counts[binding.status] += 1
+        return project
+
+    def _resolve_binding(self, module, binding, index, resolve_export):
         imported_module = self._imported_module_name(module, binding)
         if imported_module is None:
             binding.status = ResolutionStatus.UNRESOLVED
@@ -91,7 +167,9 @@ class ImportResolver:
         if binding.kind is ImportKind.MODULE:
             self._resolve_module_import(binding, imported_module, index)
         else:
-            self._resolve_symbol_import(binding, imported_module, index)
+            self._resolve_symbol_import(
+                binding, imported_module, index, resolve_export
+            )
 
     @staticmethod
     def _imported_module_name(module, binding):
@@ -127,7 +205,9 @@ class ImportResolver:
         if status in {ResolutionStatus.RESOLVED, ResolutionStatus.EXTERNAL}:
             binding.target = imported_module
 
-    def _resolve_symbol_import(self, binding, imported_module, index):
+    def _resolve_symbol_import(
+        self, binding, imported_module, index, resolve_export
+    ):
         module_status = index.module_status(imported_module)
         if module_status is ResolutionStatus.UNRESOLVED:
             if self._is_external(imported_module, binding, index):
@@ -148,9 +228,9 @@ class ImportResolver:
             return
 
         target = _extend(imported_module, binding.imported_name or "")
-        binding.status = index.qualified_status(target)
-        if binding.status is ResolutionStatus.RESOLVED:
-            binding.target = target
+        binding.status, binding.target = index.resolve_symbol(
+            target, resolve_export
+        )
 
 
 class ReferenceResolver:
@@ -159,19 +239,27 @@ class ReferenceResolver:
     def __init__(self, definitions=()):
         self.definitions = tuple(definitions)
 
-    def resolve(self, project: ProjectModel) -> None:
+    def resolve(
+        self, project: ProjectModel, defined_items=None
+    ) -> ProjectModel:
+        definitions = (
+            self.definitions if defined_items is None else tuple(defined_items)
+        )
         if any(
             binding.status is ResolutionStatus.PENDING
             for module in project.modules
             for binding in module.imports
         ):
-            ImportResolver(self.definitions).resolve(project)
+            ImportResolver(definitions).resolve(project)
 
-        index = _ProjectIndex(project, self.definitions)
+        index = _ProjectIndex(project, definitions)
+        self.status_counts = Counter()
         for module in project.modules:
             imports = self._imports_by_bound_name(module)
             for reference in module.references:
                 self._resolve_reference(module, reference, imports, index)
+                self.status_counts[reference.status] += 1
+        return project
 
     @staticmethod
     def _imports_by_bound_name(module):
@@ -249,10 +337,7 @@ class ReferenceResolver:
             reference.target = target
             return
 
-        resolved_status = index.qualified_status(target)
-        reference.status = resolved_status
-        if resolved_status is ResolutionStatus.RESOLVED:
-            reference.target = target
+        reference.status, reference.target = index.resolve_symbol(target)
 
     @staticmethod
     def _reference_target(binding, parts):
@@ -282,6 +367,7 @@ class ReferenceResolver:
             scope = scope.parent
 
     def _resolve_lexical_reference(self, module, reference, imports, index):
+        current_scope = module.scope_named(reference.scope_name)
         for scope_name in self._lexical_scopes(module, reference):
             local_name = scope_name.child(reference.parts[0])
             definitions = index.definitions_by_qualified_name.get(
@@ -309,8 +395,21 @@ class ReferenceResolver:
             if bindings:
                 self._resolve_imported_reference(reference, bindings, index)
                 return True
-            if definitions:
-                target = _extend(local_name, ".".join(reference.parts[1:]))
+            # Method receivers refer to the surrounding class. Keep ordinary
+            # parameters and local attributes on the lexical resolution path.
+            receiver = (
+                current_scope is not None
+                and scope_name == current_scope.qualified_name
+                and current_scope.receiver_name == reference.parts[0]
+                and len(reference.parts) > 1
+            )
+            if receiver or definitions:
+                base = (
+                    current_scope.parent.qualified_name
+                    if receiver
+                    else local_name
+                )
+                target = _extend(base, ".".join(reference.parts[1:]))
                 reference.status = index.qualified_status(target)
                 if reference.status is ResolutionStatus.RESOLVED:
                     reference.target = target

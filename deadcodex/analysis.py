@@ -70,6 +70,14 @@ class AnalysisResult:
             confidently_unused, key=by_size if sort_by_size else by_name
         )
 
+    def get_unused_code_qualified(
+        self, references, min_confidence=0, sort_by_size=False
+    ) -> list[Item]:
+        """Analyze collected items against the supplied resolved references."""
+        return ProjectAnalysis().analyze_references(
+            references, self, min_confidence, sort_by_size
+        )
+
     @property
     def unused_classes(self):
         return _get_unused_items(self.defined_classes, self.used_names)
@@ -110,29 +118,43 @@ class ProjectAnalysis:
     def analyze(
         self, project, result, min_confidence=0, sort_by_size=False
     ) -> list[Item]:
+        references = (
+            reference
+            for module in project.modules
+            for reference in module.references
+        )
+        return self.analyze_references(
+            references, result, min_confidence, sort_by_size
+        )
+
+    def analyze_references(
+        self, references, result, min_confidence=0, sort_by_size=False
+    ) -> list[Item]:
         if not 0 <= min_confidence <= 100:
             raise ValueError("min_confidence must be between 0 and 100.")
 
         used_targets = set()
         used_imports = set()
         uncertain_names = set()
-        for module in project.modules:
-            path = module.path.resolve()
-            for reference in module.references:
-                if reference.status is ResolutionStatus.PENDING:
-                    raise ValueError("Resolve references before analysis.")
-                if reference.status is ResolutionStatus.RESOLVED:
-                    if reference.target is not None:
-                        used_targets.add(reference.target)
-                elif reference.status in {
-                    ResolutionStatus.UNRESOLVED,
-                    ResolutionStatus.AMBIGUOUS,
-                }:
-                    uncertain_names.add(reference.name)
-                used_imports.update(
-                    (path, binding.first_lineno, binding.bound_name)
-                    for binding in reference.import_bindings
+        for reference in references:
+            if reference.status is ResolutionStatus.PENDING:
+                raise ValueError("Resolve references before analysis.")
+            if reference.status is ResolutionStatus.RESOLVED:
+                if reference.target is not None:
+                    used_targets.add(reference.target)
+            elif reference.status in {
+                ResolutionStatus.UNRESOLVED,
+                ResolutionStatus.AMBIGUOUS,
+            }:
+                uncertain_names.add(reference.name)
+            used_imports.update(
+                (
+                    reference.filename.resolve(),
+                    binding.first_lineno,
+                    binding.bound_name,
                 )
+                for binding in reference.import_bindings
+            )
 
         # Names recorded by __all__, getattr, and other dynamic usage
         # heuristics remain protected even when a static reference shares

@@ -1,6 +1,6 @@
 import ast
 
-from deadcodex import lines
+from deadcodex import lines, utils
 from deadcodex.model import ScopeKind
 
 
@@ -32,6 +32,22 @@ class ScopeCollector(ast.NodeVisitor):
             first_lineno=lines.get_first_line_number(node),
             last_lineno=lines.get_last_line_number(node),
         )
+        if (
+            kind is ScopeKind.FUNCTION
+            and self.current_scope.kind is ScopeKind.CLASS
+        ):
+            args = node.args.posonlyargs or node.args.args
+            decorators = {
+                utils.get_decorator_name(d) for d in node.decorator_list
+            }
+            if (
+                args
+                and args[0].arg in {"self", "cls"}
+                and decorators.isdisjoint(
+                    {"@staticmethod", "@builtins.staticmethod"}
+                )
+            ):
+                scope.receiver_name = args[0].arg
         self._scope_stack.append(scope)
         try:
             self.generic_visit(node)
@@ -46,3 +62,9 @@ class ScopeCollector(ast.NodeVisitor):
 
     def visit_AsyncFunctionDef(self, node):
         self._visit_named_scope(node, ScopeKind.FUNCTION)
+
+    def visit_Name(self, node):
+        if node.id == self.current_scope.receiver_name and isinstance(
+            node.ctx, (ast.Store, ast.Del)
+        ):
+            self.current_scope.receiver_name = None

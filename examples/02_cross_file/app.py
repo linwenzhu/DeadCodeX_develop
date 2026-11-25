@@ -1,6 +1,6 @@
 """Command-line entry point for the cross-file analysis example."""
 
-from shop.service import checkout as execute_checkout
+from shop import checkout as execute_checkout
 
 
 def main():

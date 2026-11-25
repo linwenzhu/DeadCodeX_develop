@@ -34,7 +34,7 @@ uv run deadcodex examples/01_basic_scan --make-whitelist
 uv run deadcodex examples/02_cross_file --entry-point app.main
 ```
 
-`app.main` 通过 `from import as` 别名到达 `shop.service.checkout`，再通过相对模块导入和相对符号别名到达格式化与税费函数。`shop.legacy.checkout` 虽然与活动函数同名，仍会被正确识别为不可达。`shop.__init__` 也保留了包级重导出的建模样例。
+`app.main` 通过 `from shop import checkout as execute_checkout` 读取 `shop/__init__.py` 重导出的函数。调用图会指向原始定义 `shop.service.checkout`，并沿相对导入到达格式化与税费函数。同名的 `shop.legacy.checkout` 仍会被报告为不可达。
 
 ## 3 Flask 和 FastAPI
 
