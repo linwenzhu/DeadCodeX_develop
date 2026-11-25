@@ -5,6 +5,7 @@ command-line arguments or the pyproject.toml file.
 
 import argparse
 import pathlib
+import sys
 
 try:
     import tomllib
@@ -280,7 +281,7 @@ def make_config(argv=None, tomlfile=None):
     # Parse CLI first to skip sanity checks when --version or --help is given.
     cli_config = _parse_args(argv)
 
-    # If we loaded data from a TOML file, we want to print this out on stdout
+    # If we loaded data from a TOML file, we want to print this out on stderr
     # in verbose mode so we need to keep the value around.
     detected_toml_path = ""
 
@@ -309,7 +310,9 @@ def make_config(argv=None, tomlfile=None):
         config.setdefault(key, value)
 
     if detected_toml_path and config["verbose"]:
-        print(f"Reading configuration from {detected_toml_path}")
+        print(
+            f"Reading configuration from {detected_toml_path}", file=sys.stderr
+        )
 
     _check_output_config(config)
 

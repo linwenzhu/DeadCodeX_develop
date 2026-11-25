@@ -1,5 +1,6 @@
 import hashlib
 import json
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -16,12 +17,14 @@ class BaselineEntry:
     first_lineno: int
 
     @classmethod
-    def from_item(cls, item, root):
+    def from_item(cls, item, root, *, include_import_source=True):
         filename = _relative_filename(item.filename, root)
         qualified_name = (
             str(item.qualified_name) if item.qualified_name is not None else ""
         )
         identity = qualified_name or f"{item.name}:{item.first_lineno}"
+        if include_import_source and item.import_source:
+            identity = f"{identity}\0{item.import_source}"
         fingerprint = _fingerprint(item.typ, filename, identity)
         return cls(
             fingerprint=fingerprint,
@@ -51,11 +54,15 @@ class Baseline:
 
     @classmethod
     def from_items(cls, items, root):
-        entries = {}
-        for item in items:
-            entry = BaselineEntry.from_item(item, root)
-            entries[entry.fingerprint] = entry
-        return cls(tuple(entries[key] for key in sorted(entries)))
+        entries = (BaselineEntry.from_item(item, root) for item in items)
+        return cls(
+            tuple(
+                sorted(
+                    entries,
+                    key=lambda entry: (entry.fingerprint, entry.first_lineno),
+                )
+            )
+        )
 
     @classmethod
     def load(cls, path):
@@ -86,15 +93,25 @@ class Baseline:
             json.JSONDecodeError,
         ) as error:
             raise ValueError(f"Invalid baseline file: {path}") from error
+        if any(not isinstance(entry.fingerprint, str) for entry in entries):
+            raise ValueError(f"Invalid baseline file: {path}")
         return cls(entries)
 
     def filter(self, items, root):
-        known = {entry.fingerprint for entry in self.entries}
-        return [
-            item
-            for item in items
-            if BaselineEntry.from_item(item, root).fingerprint not in known
-        ]
+        known = Counter(entry.fingerprint for entry in self.entries)
+        findings = []
+        for item in items:
+            fingerprint = BaselineEntry.from_item(item, root).fingerprint
+            if not known[fingerprint] and item.import_source:
+                # Older baselines identified imports by their local name.
+                fingerprint = BaselineEntry.from_item(
+                    item, root, include_import_source=False
+                ).fingerprint
+            if known[fingerprint]:
+                known[fingerprint] -= 1
+            else:
+                findings.append(item)
+        return findings
 
     def write(self, path):
         path = Path(path)

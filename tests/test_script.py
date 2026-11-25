@@ -1,5 +1,7 @@
 """Tests for the explicit command-line entry point."""
 
+import json
+
 import pytest
 
 from deadcodex import core
@@ -76,15 +78,42 @@ def test_whitelist_can_be_written_to_a_file(tmp_path, capfd):
     assert not capfd.readouterr().out
 
 
-@pytest.mark.parametrize("option", ["--format=json", "--baseline=old.json"])
-def test_pending_report_options_return_argument_error(tmp_path, capfd, option):
+def test_verbose_json_keeps_diagnostics_off_stdout(tmp_path, capfd):
+    path = tmp_path / "sample.py"
+    path.write_text("def unused():\n    pass\n", encoding="utf-8")
+    config = tmp_path / "settings.toml"
+    config.write_text("[tool.deadcodex]\nverbose = true\n", encoding="utf-8")
+
+    args = ["--config", str(config), "--format=json", str(path)]
+    assert call_deadcodex(args) == ExitCode.DeadCode
+    captured = capfd.readouterr()
+    assert json.loads(captured.out)["findings"][0]["name"] == "unused"
+    assert "Reading configuration from" in captured.err
+    assert "Scanning:" in captured.err
+
+
+def test_cli_cannot_update_baseline_from_invalid_input(tmp_path, capfd):
+    path = tmp_path / "broken.py"
+    path.write_text("def :\n", encoding="utf-8")
+    baseline = tmp_path / "baseline.json"
+    baseline.write_text("original", encoding="utf-8")
+    args = [str(path), "--baseline", str(baseline), "--update-baseline"]
+
+    assert call_deadcodex(args) == ExitCode.InvalidInput
+    assert baseline.read_text(encoding="utf-8") == "original"
+    assert "broken.py" in capfd.readouterr().err
+
+
+def test_missing_baseline_returns_argument_error(tmp_path, capfd):
     path = tmp_path / "sample.py"
     path.write_text("", encoding="utf-8")
-
     assert (
-        call_deadcodex([option, str(path)]) == ExitCode.InvalidCmdlineArguments
+        call_deadcodex(
+            ["--baseline", str(tmp_path / "missing.json"), str(path)]
+        )
+        == ExitCode.InvalidCmdlineArguments
     )
-    assert "available at this stage" in capfd.readouterr().err
+    assert "Baseline file does not exist" in capfd.readouterr().err
 
 
 @pytest.mark.parametrize(

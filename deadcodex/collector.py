@@ -172,6 +172,10 @@ class AstCollector(AnalysisResult, ast.NodeVisitor):
             # We can't easily detect when "os.path" is used.
             name = name_and_alias.name.partition(".")[0]
             alias = name_and_alias.asname
+            import_source = name_and_alias.name
+            if isinstance(node, ast.ImportFrom):
+                module = "." * node.level + (node.module or "")
+                import_source = f"{module}:{import_source}"
             if self.current_module is not None:
                 if isinstance(node, ast.Import):
                     binding = ImportBinding(
@@ -203,6 +207,7 @@ class AstCollector(AnalysisResult, ast.NodeVisitor):
                 node,
                 confidence=90,
                 ignore=_ignore_import,
+                import_source=import_source,
             )
             if alias is not None:
                 self.used_names.add(name_and_alias.name)
@@ -217,6 +222,7 @@ class AstCollector(AnalysisResult, ast.NodeVisitor):
         confidence=DEFAULT_CONFIDENCE,
         ignore=None,
         decorators=(),
+        import_source="",
     ):
         def ignored(lineno):
             return (
@@ -247,6 +253,7 @@ class AstCollector(AnalysisResult, ast.NodeVisitor):
                     confidence=confidence,
                     qualified_name=qualified_name,
                     decorators=decorators,
+                    import_source=import_source,
                 )
             )
 

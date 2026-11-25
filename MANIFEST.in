@@ -1,0 +1,4 @@
+include tox.ini uv.lock test_smoke.py
+include .github/workflows/ci.yml
+recursive-include tests *.py *.toml
+recursive-include examples *.md *.py *.toml

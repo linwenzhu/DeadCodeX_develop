@@ -88,6 +88,42 @@ def test_baseline_rejects_missing_and_invalid_files(tmp_path):
         Baseline.load(unsupported)
 
 
+def test_baseline_distinguishes_imports_bound_to_the_same_alias(tmp_path):
+    module = tmp_path / "module.py"
+    baseline_path = tmp_path / "baseline.json"
+    _write(module, "import os as dependency\n")
+    _analyze(tmp_path).report(baseline=baseline_path, update_baseline=True)
+    # Put the new import before the old one to exercise source matching.
+    _write(
+        module,
+        "from sys import version as dependency\nimport os as dependency\n",
+    )
+    updated = _analyze(tmp_path)
+    remaining = Baseline.load(baseline_path).filter(
+        updated.get_unused_code(), updated.project.root
+    )
+    assert [(item.name, item.first_lineno) for item in remaining] == [
+        ("dependency", 1)
+    ]
+
+
+def test_baseline_consumes_only_as_many_duplicate_findings_as_recorded(
+    tmp_path,
+):
+    module = tmp_path / "module.py"
+    baseline_path = tmp_path / "baseline.json"
+    _write(module, "import os as dependency\n" * 2)
+    _analyze(tmp_path).report(baseline=baseline_path, update_baseline=True)
+    _write(module, "import os as dependency\n" * 3)
+    updated = _analyze(tmp_path)
+    remaining = Baseline.load(baseline_path).filter(
+        updated.get_unused_code(), updated.project.root
+    )
+    assert [(item.name, item.first_lineno) for item in remaining] == [
+        ("dependency", 3)
+    ]
+
+
 def test_cli_baseline_workflow(tmp_path):
     module = tmp_path / "module.py"
     baseline_path = tmp_path / "baseline.json"

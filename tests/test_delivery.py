@@ -47,7 +47,7 @@ def test_ci_workflow_runs_lint_format_and_wheel_tests():
     )
 
     assert "actions/checkout@v7" in workflow
-    assert "actions/setup-python@v7" in workflow
+    assert "astral-sh/setup-uv@" in workflow
     assert "ruff check deadcodex tests" in workflow
     assert "ruff format --check deadcodex tests" in workflow
     assert "tox -e py" in workflow
